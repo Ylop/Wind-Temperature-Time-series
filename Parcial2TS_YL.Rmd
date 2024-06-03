@@ -1,0 +1,406 @@
+---
+title: "Parcial 2 TS YL"
+author: "Yanina López"
+date: "2023-11-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#Librerias necesarias 
+library(astsa)
+#install.packages(astsa)
+#install.packages("ncdf4")
+library(ncdf4)
+#install.packages("data.table")
+library(data.table)
+#install.packages("forecast")
+library(forecast)
+#install.packages("urca")
+library(urca)
+#install.packages("rugarch")
+library(rugarch)
+#install.packages("plotly")
+library(plotly)
+
+```
+
+### INTRODUCCIÓN
+
+Modelar la temperatura del aire puede ofrecer una comprensión más profunda de los patrones climáticos, permitiéndo hacer predicciones más precisas y contribuir al entendimiento de los cambios climáticos a largo plazo y sus implicaciones en el ámbito de la meteorología, la climatología y otras disciplinas relacionadas.
+
+El meridiano cero, al estar en Greenwich, longitud cero (polo norte) es un lugar de referencia para la hora estándar mundial (GMT/UTC). La recopilación de datos meteorológicos en este lugar proporciona información clave para la creación y mantenimiento de registros climatológicos globales, comprender los patrones climáticos globales y las variaciones estacionales. Estos datos son fundamentales para la investigación sobre el cambio climático y sus efectos.
+
+La temperatura del aire en el meridiano cero es utilizada en modelos meteorológicos globales para prever patrones climáticos y eventos meteorológicos extremos en todo el mundo. Utilizar el meridiano cero como referencia para mediciones atmosféricas proporciona estándares internacionales consistentes para la comparación de datos meteorológicos en todo el mundo e incluso puede ser crucial para la aviación y la navegación, ya que afecta a la densidad del aire, lo que a su vez influye en la altitud de vuelo y en el rendimiento de las aeronaves.
+
+La medición de la temperatura del aire a una atmósfera de presión en el meridiano cero también puede contribuir a estudios atmosféricos más amplios, como la comprensión de la estratificación térmica y la circulación atmosférica.
+
+La National Oceanic and Atmospheric Administration (NOAA) posee satélites para capturar mediciones de variables utilizando la técnica de asimilación de datos que combina observaciones del mundo real con modelos numéricos para mejorar la precisión y la confiabilidad de las predicciones o estimaciones.
+
+En ese sentido se obtuvo una serie de tiempo con datos mensuales de temperatura promedio del aire en escala Kelvin a 1000 milibares de presión que equivalen a aproximadamente una atmósfera de presión (sobre el nivel del mar) durante los últimos 44 años (Enero de 1979 - Diciembre de 2022).
+
+![](images/Captura%20de%20Pantalla%202023-10-17%20a%20la(s)%2011.52.51%20p.m..png)
+
+FUENTE: (<https://psl.noaa.gov/data/gridded/data.ncep.reanalysis2.html>):
+
+```{r}
+#cargue de datos
+
+ruta_archivo <-"/Users/macbookair/Documents/DOCTORADO/SERIES DE TIEMPO/PARCIAL 2/air.mon.mean.nc"
+Vwind <- nc_open(ruta_archivo)
+
+#En caso de error con los datos descargue los datos desde el sgte enlace y reemplace la ruta de archivo: https://drive.google.com/file/d/1PGXFUVWz9pC9_rCmmmfuJgjxe0N9j65L/view?usp=sharing
+
+attributes(Vwind$var)
+attributes(Vwind$dim)
+
+
+```
+
+Se extraen los datos de temperatura del aire para lon:1,lat:1 y level:1:  Temperatura promedio del aire en escala Kelvin a 1000 milibares de presión (que equivalen a aproximadamente una atmósfera de presión o sobre el nivel del mar), en la ubicación geografica de latitud cero sobre el meridiano de Greenwich.
+
+
+```{r}
+mi_variable <-ncvar_get(Vwind, "air")
+nc_close(Vwind)
+Vwind.ts <- ts(mi_variable[1,1,1,c(1:537)], frequency = 12)
+str(Vwind.ts)
+str(var)
+```
+
+Aplicando la metodología BOX-JENKINGS
+
+### IDENTIFICACIÓN: EDA
+
+```{r}
+
+plot(decompose(Vwind.ts))
+```
+
+```{r}
+	
+ggseasonplot(Vwind.ts)
+```
+
+```{r}
+ggseasonplot(Vwind.ts,polar=TRUE)
+```
+
+```{r}
+ggtsdisplay(Vwind.ts)
+```
+
+```{r}
+Modelo1<-sarima(Vwind.ts, p=1, d=1, q=1, P=1, D=1, Q=1, S=12)
+Modelo1$ttable
+residuos<-Modelo1$fit$residuals
+acf2(residuos)
+
+Box.test(residuos, lag=8, type='Ljung-Box')
+Box.test(residuos, lag=16, type='Ljung-Box')
+Box.test(residuos, lag=24, type='Ljung-Box')
+```
+
+
+Debo verificar si hay raices unitarias en las estacionalidades y volatilidad. De la exploración de los datos, en las diferentes gráficas se puede identificar claramente un componente estacional en los datos originales por lo que una vez verificada la estacionariedad, el modelo propuesto debe poder representar la estacionalidad.
+
+### ESTIMACIÓN: Detección de raíces unitarias y verificar estabilidad
+
+![](images/Captura%20de%20Pantalla%202023-10-14%20a%20la(s)%204.29.33%20p.m..png)
+
+ESTACIONARIEDAD
+
+Se verifica estacionariedad para serie original siguiendo el algoritmo de la prueba de Dickey Fuller aumentada:
+
+```{r}
+ADF<-ur.df(Vwind.ts,type = "trend",lag=12)
+summary(ADF)
+```
+
+Para evaluar la presencia de raíces unitarias en una serie temporal, lo que indica la no estacionariedad se seguirán los sigueintes pasos: ***Paso 1.*** Iniciar con el modelo menos restrictivo con un modelo que incluye tendencia,, usar ${\tau_3}$ para probar ${\gamma=0}$. Dado que la prueba tiene poca potencia si se rechaza entonces no se continua.
+
+```{r}
+ADF1<-ur.df(Vwind.ts,type = "trend",lag=24, selectlags= "BIC")
+summary(ADF1)
+
+ADF2<-ur.df(Vwind.ts,type = "trend",lag=24, selectlags= "AIC")
+summary(ADF2)
+```
+
+Teniendo en cuenta queValor del estadistico de prueba -2.7864 mayor que tau3 critico para cualquier nivel de significancia, por tanto no se rechaza Ho
+
+Se selecciona el ajuste de ADF2 escogido por AIC con 23 rezagos o grados de libertad, cuyos residuos se comportan más como ruido blanco comparado con el ajuste ADF1 escogido por BIC con 11 rezagos. El summary de este ajuste arroja un valor del estadístico de -2.7864 el cual comparado con tau3 critico para cualquier nivel de significancia no permite rechazar la hipótesis nula. Este no es el resultado final ya que el proposito de esta parte es determinar el numero de lags. El pvalor dado en la tabla t para los coeficientes en particular el de gamma no es confiable porque la distribucion de los procesos con raiz unitaria no se comporta como t.
+
+p-valor dado en la tabla t para los coeficientes, en particular el de gamma, no es confiable debido a que la distribución de los procesos con raíz unitaria no se comporta como una distribución t. La prueba de Dickey-Fuller es especialmente sensible a la cantidad de rezagos utilizados, y seleccionar el número óptimo de rezagos es una parte importante del proceso.
+
+Se debe probar el modelo nuevamente según el paso 2 de la imagen para determinar si la serie no es estacionaria.
+
+```{r}
+
+residuos<-ADF1@res
+acf2(residuos)
+residuos<-ADF2@res
+acf2(residuos)
+
+```
+
+Se visualiza la autocorrelación de los residuos y evaluar su comportamiento.
+
+```{r}
+# Hacemos la prueba de Dickey Fuller con el modelo restringido.
+
+ADF_R<-ur.df(Vwind.ts,type = "drift",lag=23, selectlags= "Fixed")
+summary(ADF_R)
+```
+
+***Paso 2.*** Verificar si debe incluirse la tendencia, usando ${\phi_3}$. Probemos entonces que ${a_2 = \gamma = 0}$. Recordemos las hipótesis involucradas y el cálculo de ${\phi_i}$
+
+-   Modelo restringido: ${H_0: \Delta Y_t = a_0+c_1 \Delta Y_{t-1}+...+c_p\Delta Y_{t-p} + e_t}$
+
+-   Modelo no restringido: ${H_1: \Delta Y_t = a_0+a_2t + \gamma \Delta Y_{t-1}+ c_1\Delta Y_{t-1}+...+c_p\Delta Y_{t-p} + e_t}$
+
+-   ${\phi_i = [(SSR_r - SSR_n)/r] / [SSR_n/(T-k)]}$
+
+-   ${SSR_r}$ = SSR restringido
+
+-   ${SSR_n}$ = SSR no restringido
+
+-   ${r}$ = Número de restricciones
+
+-   ${T}$ = Número de observaciones utiles
+
+-   ${k}$ = Número de parametros estimados en el modelo no restringido
+
+-   ${T- k}$ = grados de libertad del modelo no restringido
+
+```{r}
+SSR_U<-ADF2@testreg$sigma^2*ADF2@testreg$df[2]
+SSR_R<-ADF_R@testreg$sigma^2*ADF_R@testreg$df[2]
+r<-2 #Numero de restricciones
+df_u<-ADF@testreg$df[2]
+fi3=((SSR_R-SSR_U)/r)/(SSR_U/df_u)
+fi3
+```
+
+Se calcula SSR para los modelos restringido y no restringido, define el número de restricciones y los grados de libertad, y luego calcula el estadístico ${\phi_3}$. con el fin de evaluar si la inclusión de la tendencia mejora significativamente el modelo, comparando el modelo no restringido (con tendencia) y el modelo restringido (sin tendencia).
+
+Se espera que ${\phi_3}$ sea mayor a los puntos críticos del modelo no restringido para rechazar la hipótesis nula, se obtiene que es ${\phi_3}$ 3.038654 Al comparar con los puntos críticos del modelo ADF2 (NO RESTRINGIDO) se tiene que ${\phi_3}$ es menor por lo que por tanto no se rechaza H0, Quiere decir que entonces que no hay tendencia, puede haber raíz unitaria y debemos ir al siguiente paso del algoritmo.
+
+```{r}
+# Miramos la ACF de los residuos para estar seguro que hay ruido blanco
+residuos_ADF_R<-ADF_R@res
+acf2(residuos_ADF_R)
+```
+
+Al revisar la ACF de los residuos vemos que hay una espiga que sobresale un poco y puede ser producto del azar. Por lo tanto, asumiremos que la ACF de los residuos es ruido blanco.
+
+***Paso 3.*** Estimaremos el modelo sin tendencia, es decir, ${\Delta Y_t = a_0 + \gamma * Y_{t-1}+c_1* \Delta Y{t-1} + ... + cp * \Delta Y_{t-p} + \epsilon_t}$. Para eso usamos ${\tau2}$ para verificar si hay raiz unitaria.
+
+```{r}
+summary(ADF_R)
+```
+
+Al comparar tau_2 se tiene que es -1,2983 con los valores críticos de tau2 y se tiene que patra para cualquier nivel de significancia es mayor por lo que no se rechaza la hipótesis nula. Lo que indica que aún es posible que exista una raíz unitaria. y debemos calcular phi1.
+
+```{r}
+ADF_N<-ur.df(Vwind.ts,type = "none",lag=23, selectlags= "Fixed")
+summary(ADF_N)
+```
+
+```{r}
+SSR_U<-ADF_R@testreg$sigma^2*ADF_R@testreg$df[2]
+SSR_R<-ADF_N@testreg$sigma^2*ADF_N@testreg$df[2]
+r<-2 #Numero de restricciones
+df_u<-ADF_R@testreg$df[2]
+fi1=((SSR_R-SSR_U)/r)/(SSR_U/df_u)
+fi1
+```
+
+```{r}
+test_001<-fi1>ADF_R@cval[2,1]
+test_005<-fi1>ADF_R@cval[2,2]
+test_010<-fi1>ADF_R@cval[2,3]
+```
+
+```{r}
+# Miramos la ACF de los residuos para estar seguro que hay ruido blanco
+residuos_ADF_N<-ADF_N@res
+acf2(residuos_ADF_N)
+```
+
+Teniendo en cuenta que phi_1 es menor para cualquier nivel de confianza que los puntos críticos del modelo no restringido para este punto, y los residuos se comportan como ruido blanco, entonces se acepta la hipótesis nula y se concluye que la serie de tiempo tiene tendencia estocástica por lo que hay raiz unitaria, sin intersecto ni tendencia.
+
+```{r}
+DVwind<-(diff(Vwind.ts))
+plot(DVwind)
+```
+
+Viendo el resultado que arroja la gráfica de la serie con una diferenciación, vemos un comportamiento que fluctua alrededor de 0.Ahora bien, para tener mayor certeza que la serie una vez diferenciada es estacionaria se aplica la función ndiffs que permite determinar el número de diferenciaciones que requiere la serie para volverse estacionaria, el resultado es 1:
+
+```{r}
+ndiffs(Vwind.ts,alpha = 0.05,test = c("kpss", "adf", "pp"),type = c("level", "trend"),max.d = 2)
+```
+
+Se revisan los residuos:
+```{r}
+acf2(DVwind)
+```
+
+
+Para entender si hay patrones de correlación en los datos diferenciados se realiza el gráfico de autocorrelación de la serie diferenciada. En este se puede observar una autocorrelación Positiva en el Primer Rezago sugiere que hay una correlación positiva entre los valores actuales y los valores inmediatamente anteriores. En otras palabras, la temperatura del aire en un momento dado está correlacionada positivamente con la temperatura del aire en el momento anterior. Esto seguido de "ocho espigas hacia abajo" podrían indicar autocorrelaciones negativas en los rezagos siguientes. Esto podría interpretarse como una especie de patrón cíclico de cambios en la temperatura del aire. Ahora bien, los rezagos están por fuera de las bandas de confianza (las "bandas" generadas por la función acf()), podría indicar que algunas de estas autocorrelaciones son estadísticamente significativas.
+
+Un patrón claro en las autocorrelaciones podría indica estacionalidad o repetición de patrones en la serie temporal de la temperatura del aire, lo que puede ser resultado de características específicas los datos de temperatura del aire, como factores climáticos, estacionales, o patrones diarios pueden influir en estos resultados. Se ratifica el comportamiento estacional de la serie aún despúes de una diferenciación y al no hallar ruido blanco implica que la diferenciación no hace que la serie sea estacionaria, en ese caso se se requiere probar una diferenciación estacional para cada 12 periodos:
+
+```{r}
+plot(diff((Vwind.ts),lag=12))
+ggseasonplot(diff(diff(Vwind.ts),lag=12))
+ggseasonplot(diff(diff(Vwind.ts),lag=12), polar=TRUE)
+ggsubseriesplot(diff(diff(Vwind.ts),lag=12))
+acf2(diff(diff(Vwind.ts), lag=12))
+```
+Se hace la diferenciación estacional de 12 periodos al tratarse de datos mensuales  
+```{r}
+d12datos<-diff(Vwind.ts, lag=12)
+acf2(d12datos)
+muestra<-window(d12datos, end=c(430,12))
+```
+
+Nótese que desaparecen las espigas estacionales. Se repite el proceso de estimación del número de rezagos en diferencia
+
+```{r}
+TryMod<-ur.df(muestra, type="trend", lags=12, selectlags = "AIC")
+summary(TryMod)
+resTryMod<-TryMod@res
+acf2(resTryMod, max.lag = 30)
+Box.test(resTryMod, lag=8, type='Ljung-Box')
+Box.test(resTryMod, lag=16, type='Ljung-Box')
+Box.test(resTryMod, lag=24, type='Ljung-Box')
+```
+
+
+
+```{r}
+#Revisión de volatilidad
+vol<-100*diff(log(Vwind.ts))
+vol<-na.omit(vol)
+plot(vol)
+```
+
+Una vez calculado y graficado los rendimientos porcentuales de la temperatura del aire, para obtener información sobre la volatilidad de la temperatura del aire a lo largo del tiempo. No se observan patrones notables en el gráfico, como picos o caídas bruscas, por lo que no existen indicios que puedan interpretarse como momentos de mayor o menor volatilidad en la temperatura del aire.
+
+```{r}
+
+# Ajusta un modelo GARCH(1,1)
+model_spec <- ugarchspec(variance.model = list(model = "sGARCH", garchOrder = c(0, 1)),
+                         mean.model = list(armaOrder = c(0, 0)))
+
+fit <- ugarchfit(spec = model_spec, data = d12datos)
+
+# Obtiene los residuos estandarizados
+residuals <- residuals(fit, standardize = TRUE)
+
+# Crea un gráfico de dispersión condicional
+plot(x = d12datos, y = residuals, type = "l",
+     xlab = "Tiempo", ylab = "Residuos Estandarizados",
+     main = "Gráfico de Dispersión Condicional")
+
+# Añade una línea de referencia en y=0 para destacar los cambios en la volatilidad
+abline(h = 0, col = "red", lty = 2)
+
+```
+
+Adicionalmente para analizar la volatilidad condicional en la serie de tiempo se realiza una gráfica de dispersión condicional que muestra la evolución de los residuos estandarizados a lo largo del tiempo que refleja que no hay mayor volatilidad debido a que gráficamente no se visualizan cambios destacados con respecto a la línea de referencia en y=0.
+
+### MODELACIÓN Y AJUSTE 
+A sabienda que existe estacionalidad en los datos originales, vamos a tratar de construir el modelo a partir de la misma, esto nos supone que en el modelo SARIMA $d=1$.
+
+Inicialmente se usa la función arima para ajustar un modelo ARIMA estacional. El orden del componente no estacional seleccionado como punto de partida según el análisis de autocorrelación de la serie de tiempo es (2,1,0) (indicando un AR(2) y una diferenciación de orden 1). El componente estacional se especifica como (0,0,5) (indicando un componente estacional de orden 5).
+
+```{r}
+M1<-arima(muestra,order=c(2,1,0),seasonal=list(order=c(0,0,5)),fixed = c(0,NA,0,NA,0,0,NA))
+M1
+bic=AIC(M1,k = log(length(d12datos)))
+bic
+```
+
+```{r}
+acf2(M1$residuals)
+acf2
+```
+En este primer modelo M1 se obtiene que no hay ruido blanco por lo que se deben explorar otras opciones para ajustar el modelo.
+
+Se usa la función autoarima para obtener aproximación de parámetros en la modelación:
+```{r}
+auto.arima(muestra)
+
+```
+
+
+
+
+```{r}
+M2<-arima(muestra,order=c(2,0,1),seasonal=list(order=c(0,1,1),period=12))
+M2
+bic=AIC(M2,k = log(length(muestra)))
+bic
+
+```
+
+```{r}
+acf2(M2$residuals)
+acf2
+```
+
+```{r}
+M3<-sarima(muestra,p=2,d=0,q=1,P=0,D=1,Q=4,S=12)
+M3$ttable
+M3$AIC
+M3$BIC
+```
+
+Para verificar si los residuos del modelo son ruido blanco, es decir validar si no hay patrones de autocorrelación se aplica la prueba Ljung-Box, con el fin de indentificar si la serie de tiempo exhibe autocorrelación significativa en varios lags. En este caso, los términos sma1 y sma2 son significativos, lo que sugiere que tienen un impacto estadísticamente significativo en el modelo.
+
+Se tiene que el modelo M3 presenta buen ajuste, los coeficientes del modelo según la tabla t son significativos y los residuos del mismo se comportan como ruido blanco y presenta el mejor AIC.
+
+
+### CHEQUEO Y SELECCIÓN DEL MODELO: 
+Teniendo en cuenta que La hipótesis nula (H0) en la prueba de Box-Ljung es que no hay autocorrelación significativa en los residuos de la serie de tiempo hasta un cierto número de lags y La hipótesis alternativa (H1) es que hay autocorrelación significativa en los residuos hasta un cierto número de lags. La prueba calcula una estadística de prueba, conocida como estadístico Q de Ljung-Box, que se basa en los valores autocorrelacionados de los residuos hasta un número específico de lags. Se tiene que el modelo M4 presenta buen ajuste para la serie de tiempo ya que o hay autocorrelación significativa en los residuos de la serie de tiempo hasta un cierto número de lags y estos son ruido blanco.
+
+Ahora bien alcomparar el BIC (Criterio de Información Bayesiano) y el AIC (Criterio de Información de Akaike) favorecen modelos más pequeños y parsimoniosos pero el BIC tiende a penalizar la complejidad más fuertemente que el AIC de los dos modelos se selecciona el modelo M3 por tener mejor BIC
+``
+
+Se puede apreciar gráficamente que el modelo M3 presenta un comportamiento similar a los datos de temperatura del aire, es decir que representa la serie de tiempo de temperatura media del aire de los últimos 44 años a una atmósfera de presión en el meridiando Greenwich, latitud cero.
+
+
+Se aprecia estacionalidad año tras año si mayores fluctuaciones en los rendimientos año tras año teniendo en cuenta que los comportamientos mensuales a través del tiempo son bastante estables por lo tanto no se contemplará modelar la volatilidad
+
+```{r}
+M4<-sarima(muestra, p=2,d=0,q=1,P=0,D=1,Q=4,S=12)
+M4$ttable
+residuos4<-M4$fit$residuals
+acf2(residuos4)
+Box.test(residuos4, lag=8, type='Ljung-Box')
+Box.test(residuos4, lag=16, type='Ljung-Box')
+Box.test(residuos4, lag=24, type='Ljung-Box')
+
+```
+según estos resultados del test de Ljung-Box, no hay evidencia significativa de autocorrelación en los residuos del modelo SARIMA hasta los rezagos considerados (8, 16, y 24). Esto sugiere que el modelo SARIMA ha capturado adecuadamente la estructura de autocorrelación en la serie de tiempo. Lo anterior implica que se ha encontrado el Modelo.
+
+#### Pronóstico
+
+A continuación se presenta el resultado del análisis de la serie de tiempo de temperatura del aire, se identificó que la serie tiene un comportamiento estacional inicialmente no estacionaria que tuvo que diferenciarse estacionalmente para poder ser modelada, no fue necesario modelar volatilidad ni cambios estructurales en la serie y con la modelación se pudo hallar un modelo SARIMA con un componente autoregresivo (AR), un componente de media móvil (MA), tanto en la parte no estacional como en la estacional, y también incluye diferenciación para manejar tendencias no estacionarias y estacionalidad mensual. La elección específica de estos parámetros se basa en el análisis y la comprensión de la serie de tiempo particular que se ha modelado.
+
+A continuación se presenta la gráfica del modelo con los datos de muestra frente a la serie original de temperatura del aire.
+```{r}
+sarima.for(muestra,n.ahead=24,p=2,d=0,q=1,P=0,D=1,Q=4,S=12)
+lines(Vwind.ts)
+```
+```{r}
+fig <- plot_ly(y = Vwind.ts, name = "Original Data", type = 'scatter', mode = 'lines') 
+fig <- fig %>% add_trace(y = Vwind.ts+M4$fit$residuals, name = "Predicted Values", connectgaps = TRUE)
+fig
+```
+Se hace la comparación final de los datos originales vs los datos generados por el modelo.
